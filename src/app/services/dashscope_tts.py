@@ -26,6 +26,31 @@ _PCM_FORMAT_BY_RATE: dict[int, AudioFormat] = {
 }
 
 
+def synthesize_to_pcm(
+    *, api_key: str, model: str, voice: str, sample_rate: int, text: str
+) -> bytes:
+    """同步合成一段文本为 raw PCM 字节（用于预合成固定开场白，启动时调一次）。"""
+    dashscope.api_key = api_key
+    chunks: list[bytes] = []
+
+    class _Callback(ResultCallback):
+        def on_data(self, data: bytes) -> None:
+            chunks.append(data)
+
+        def on_error(self, message) -> None:
+            logger.warning(f"[TTS] 预合成错误: {message}")
+
+    synthesizer = SpeechSynthesizer(
+        model=model,
+        voice=voice,
+        format=_PCM_FORMAT_BY_RATE[sample_rate],
+        callback=_Callback(),
+    )
+    synthesizer.streaming_call(text)
+    synthesizer.streaming_complete()
+    return b"".join(chunks)
+
+
 class CosyVoiceTTSService(TTSService):
     """百炼 CosyVoice flash 的 Pipecat TTS service（流式）。"""
 
@@ -36,6 +61,8 @@ class CosyVoiceTTSService(TTSService):
         model: str = "cosyvoice-v3-flash",
         voice: str = "longxiaochun",
         sample_rate: int = 24000,
+        greeting_text: str | None = None,
+        greeting_pcm: bytes | None = None,
         **kwargs,
     ):
         # push_start_frame/push_stop_frames=True：让基类自动包裹 TTSStarted/StoppedFrame
@@ -51,8 +78,23 @@ class CosyVoiceTTSService(TTSService):
         if sample_rate not in _PCM_FORMAT_BY_RATE:
             raise ValueError(f"CosyVoice 不支持的采样率: {sample_rate}")
         self._audio_format = _PCM_FORMAT_BY_RATE[sample_rate]
+        # 预合成的固定开场白：命中则直接吐缓存，跳过 DashScope 网络合成
+        self._greeting_text = (greeting_text or "").strip()
+        self._greeting_pcm = greeting_pcm
 
     async def run_tts(self, text: str, context_id: str) -> AsyncGenerator[Frame | None, None]:
+        # —— 开场白走预合成缓存，省掉一次 TTS 网络合成 ——
+        if self._greeting_pcm and text.strip() == self._greeting_text:
+            logger.info(f"[TTS] 开场白走预合成缓存: {text}")
+            chunk = int(self.sample_rate * 0.04) * 2  # 40ms/帧
+            for i in range(0, len(self._greeting_pcm), chunk):
+                yield TTSAudioRawFrame(
+                    audio=self._greeting_pcm[i : i + chunk],
+                    sample_rate=self.sample_rate,
+                    num_channels=1,
+                )
+            return
+
         logger.info(f"[TTS] 合成: {text}")
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[bytes | None] = asyncio.Queue()

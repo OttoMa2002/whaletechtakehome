@@ -45,9 +45,17 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
-        """asyncpg / SQLAlchemy(async) 连接串。"""
+        """SQLAlchemy(async) 连接串。"""
         return (
             f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )
+
+    @property
+    def asyncpg_dsn(self) -> str:
+        """asyncpg.connect/create_pool 用的 DSN。"""
+        return (
+            f"postgresql://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
 
