@@ -23,14 +23,15 @@ class Settings(BaseSettings):
         alias="LLM_BASE_URL",
     )
 
-    # —— STT（百炼 Paraformer 实时，注意 8k 采样率）——
-    stt_model: str = Field(default="paraformer-realtime-8k-v2", alias="STT_MODEL")
-    stt_sample_rate: int = Field(default=8000, alias="STT_SAMPLE_RATE")
+    # —— STT（百炼 Paraformer 实时）——
+    # 阶段1本地麦 16k 用 paraformer-realtime-v2；阶段4电话(8k)切 paraformer-realtime-8k-v2 + 8000
+    stt_model: str = Field(default="paraformer-realtime-v2", alias="STT_MODEL")
+    stt_sample_rate: int = Field(default=16000, alias="STT_SAMPLE_RATE")
 
     # —— TTS（百炼 CosyVoice flash）——
     tts_model: str = Field(default="cosyvoice-v3-flash", alias="TTS_MODEL")
-    tts_voice: str = Field(default="longxiaochun", alias="TTS_VOICE")
-    tts_sample_rate: int = Field(default=8000, alias="TTS_SAMPLE_RATE")
+    tts_voice: str = Field(default="longxiaochun_v3", alias="TTS_VOICE")
+    tts_sample_rate: int = Field(default=24000, alias="TTS_SAMPLE_RATE")
 
     # —— PostgreSQL ——
     postgres_user: str = Field(default="voicegate", alias="POSTGRES_USER")

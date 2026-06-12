@@ -1,27 +1,40 @@
 """入口：组装并启动 pipeline。
 
-阶段 0 只做"空跑"——加载配置、初始化日志、打印就绪信息后退出，
-用于验证脚手架可启动、配置可读。后续阶段在此组装 Pipecat 管线。
+阶段 1：本地麦克风语音闭环。对着 Mac 麦克风说话，门岗 agent 用语音回应。
 """
 
+import asyncio
+
+from loguru import logger
+
+from pipecat.workers.runner import WorkerRunner
+
 from app.config import get_settings
-from app.logging_utils import get_logger, setup_logging
+from app.pipeline import build_worker
+
+
+async def run() -> None:
+    settings = get_settings()
+    if not settings.dashscope_api_key:
+        raise SystemExit("缺少 DASHSCOPE_API_KEY，请在 .env 中配置")
+
+    logger.info("园区访客语音登记 Agent —— 阶段 1 本地麦克风闭环")
+    logger.info(f"STT={settings.stt_model}@{settings.stt_sample_rate}  "
+                f"LLM={settings.llm_model}  "
+                f"TTS={settings.tts_model}/{settings.tts_voice}@{settings.tts_sample_rate}")
+
+    worker = build_worker(settings)
+    runner = WorkerRunner()
+    await runner.add_workers(worker)
+    logger.info("开始监听麦克风（Ctrl+C 退出）……")
+    await runner.run()
 
 
 def main() -> None:
-    setup_logging()
-    log = get_logger("app.main")
-
-    settings = get_settings()
-
-    log.info("园区访客语音登记 Agent —— 阶段 0 脚手架启动")
-    log.info("LLM 模型: %s", settings.llm_model)
-    log.info("STT 模型: %s (%dHz)", settings.stt_model, settings.stt_sample_rate)
-    log.info("TTS 模型: %s (%dHz)", settings.tts_model, settings.tts_sample_rate)
-    log.info("数据库: %s:%s/%s", settings.postgres_host, settings.postgres_port, settings.postgres_db)
-    log.info("DASHSCOPE_API_KEY 是否已配置: %s", bool(settings.dashscope_api_key))
-    log.info("WECOM webhook 是否已配置: %s", bool(settings.wecom_webhook_url))
-    log.info("脚手架就绪，空跑结束。")
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        logger.info("已退出")
 
 
 if __name__ == "__main__":

@@ -18,7 +18,7 @@ dependencies = [
     # —— 百炼语音 SDK（CosyVoice TTS / Paraformer STT 用）——
     "dashscope>=1.20",
     # —— 编排（音频重型 extras：silero/local，放到阶段 1 再加）——
-    "pipecat-ai>=0.0.50",
+    "pipecat-ai[local,qwen,silero]>=0.0.50",
 ]
 
 [dependency-groups]

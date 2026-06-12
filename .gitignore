@@ -11,5 +11,8 @@ __pycache__/
 # —— uv / venv ——
 .venv/
 
+# —— 测试生成的音频产物 ——
+scripts/out_*.wav
+
 # —— 系统 / 编辑器 ——
 .DS_Store
