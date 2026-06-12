@@ -6,15 +6,15 @@
 ## 一句话
 语音门岗 agent：来电者打进来，自然对话采集 **车牌/来访单位/手机号/来访事由**，结构化登记推送到企业微信群。接通到推送 < 25s。全栈国产（阿里云百炼），开源。
 
-## 当前状态：阶段 0–3 完成，下一步阶段 4
+## 当前状态：阶段 0–3 完成，阶段 4 来电源已打通（微信音质受限，见下）
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | 0 脚手架 | uv/依赖/postgres/config/空跑 | ✅ 已 commit |
 | 1 音频闭环 | 麦→Paraformer STT→Qwen→CosyVoice TTS→扬声器 | ✅ 已 commit |
 | 2 数据通路 | submit_registration 工具→写库→推企微 + 计时埋点 | ✅ 已 commit |
 | 3 对话质量 | 重构对话结构压时间、公司名单匹配、优雅收尾 | ✅ 待人工 commit |
-| 4 来电源 | BlackHole+微信语音 / iPhone Continuity 真电话 | ⬜ 下一步 |
-| 5 计时+文档 | 多轮验证<25s、README/架构图、ASR鲁棒性调优 | ⬜ |
+| 4 来电源 | BlackHole 虚拟声卡 + 微信语音：端到端**全程跑通**（STT/对话/名单/复述/入库/推企微/优雅收尾都在线工作）。**唯一遗留：访客听到的门岗 TTS 被微信麦克风 DSP 弄糊**（详见「阶段4 音质坑」），属微信内部限制、非本系统问题。Continuity 真电话未做。 | 🟡 通路达成/音质受微信限制 |
+| 5 计时+文档 | 多轮验证<25s、README/架构图、ASR鲁棒性调优 | ⬜ 下一步 |
 | 6 加分项 | 查询agent/回访识别/多路并发 | ⬜ |
 
 ## 锁定技术栈（不要替换）
@@ -77,10 +77,24 @@ uv run python scripts/test_tts.py    # 单独验 TTS
 uv run python scripts/test_stt.py    # 单独验 STT（自洽往返）
 ```
 
-## 阶段 4 起步建议（下一步）
-- 先 BlackHole 虚拟声卡 + 微信语音接入（中国侧免费可达）；再 iPhone Continuity 真电话 demo。
-- 音频源切到 8k 时：STT 换 `paraformer-realtime-8k-v2` + `STT_SAMPLE_RATE=8000`，TTS/采样率对应调整。
-- 真挂电话/会话生命周期随来电源接入再完善。
+## 阶段 4 实现与音质坑（已做）
+**怎么接的**：BlackHole 装两块（2ch + 16ch，brew cask；驱动加载后 `sudo killall coreaudiod` 即出现，免重启）。微信只认系统默认设备、无法 App 内选设备，所以靠虚拟声卡两条总线做全双工：
+- 系统输出 = 多输出设备「门岗监听」(= BlackHole 16ch + MacBook扬声器做监听) → 微信播放的**访客声音**进 16ch；Pipecat 输入读 16ch。
+- 系统输入 = BlackHole 2ch → Pipecat 输出(TTS)写 2ch，微信当**麦克风**读 2ch 发给访客。
+- 代码侧：`config.py` 加 `AUDIO_INPUT_DEVICE`/`AUDIO_OUTPUT_DEVICE`（按设备名子串匹配 PyAudio index，留空=系统默认=本地麦，保住阶段1-3）；`pipeline.py` 的 `_resolve_device_index` 解析后锁进 `LocalAudioTransportParams.input_device_index/output_device_index`。当前 `.env`：输入 16ch / 输出 2ch。
+- 采样率：`TTS_SAMPLE_RATE` 从 24000 改 **48000**（CosyVoice 原生支持），对齐声卡名义率 48k，输出路径零重采样。STT 仍 16k（`paraformer-realtime-v2`）；微信非真 PSTN、是数字音频经声卡，**不需要切 8k**（8k 那条留给真 PSTN）。
+
+**端到端结果**：5 通微信语音全部跑通——STT 完美、批量抽取、`lookup_company` 名单匹配（连"蓝色金鱼→蓝色鲸鱼科技"误识都纠回）、复述确认、`submit_registration` 入库、推企微、优雅收尾自动挂断。每轮 Qwen TTFB 0.4–0.8s、TTS 首包 460–640ms，延迟很好。
+
+**音质坑（未解决，判定为微信内部限制，非本系统问题）**：访客听到的门岗 TTS **稀烂/串道/嘈杂**。排查结论：
+- BlackHole 环回测试（自播自录算互相关）：2ch 与 16ch **都 1.000 完美无损** → 我们的管线和声卡链路干净。
+- 换设备（2ch↔16ch）、换采样率（24k↔48k）四种组合都烂 → 变量都在我方动过，无效。
+- 访客**上行**语音（同样过微信编码）STT 识别完美 → 微信语音编码本身不毁音质。
+- 结论：毁音质的是**微信「语音通话」对麦克风输入的 DSP**（降噪/AGC/AEC/窄带语音编码，为真人真麦调的），把从虚拟麦灌进去的合成语音当噪声/回声处理。**微信内部，关不掉**。
+
+**计时口径错位（待修，若继续做阶段4才需要）**：开场白+`start_call()` 挂在 app 启动那刻（`on_pipeline_started`），但微信是 app 起好后才拨入接通，中间空档被计进总耗时 → 实测 98–118s 虚高超标（真实"接通→推送"约 16s，达标）。修法：方案B 手动触发——app 启动不自动问候，Mac 接起后按回车才问候+计时同起。**未实施**。
+
+**下一步若重启阶段4**：(1) Continuity 真电话可能音质更好（走真实蜂窝、不经微信 DSP，窄带但通常干净；但 TTS 仍经虚拟麦灌 iPhone、运营商侧也可能有 DSP，且 Continuity 需两台苹果设备同网、不稳）。(2) 修计时口径（方案B）。(3) 真挂电话/会话生命周期完善。
 
 ## 已知待办 / 推迟项
 - **ASR 鲁棒性**（阶段 5）：车牌"沪A→互微"、快速报手机号"→我不知道"等误识。**热词偏置已调研：可行但不划算**（车牌开放集合、偏置易帮倒忙；公司名已被 roster 覆盖），并入阶段 5 整体调优。复述确认门已能接住这些误识、不产生错误数据。

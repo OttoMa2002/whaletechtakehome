@@ -39,12 +39,40 @@ class EndAfterRegistration(FrameProcessor):
             await self.push_frame(EndTaskFrame(), FrameDirection.UPSTREAM)
 
 
+def _resolve_device_index(name: str, *, want_input: bool) -> int | None:
+    """按设备名子串匹配 PyAudio 设备 index；留空或找不到返回 None（系统默认）。
+
+    阶段4：输入锁 BlackHole 2ch（访客声音）、输出锁 BlackHole 16ch（回程给微信麦克风），
+    避免走系统默认导致 TTS 自听成环。
+    """
+    if not name:
+        return None
+    import pyaudio
+
+    pa = pyaudio.PyAudio()
+    try:
+        ch_key = "maxInputChannels" if want_input else "maxOutputChannels"
+        for i in range(pa.get_device_count()):
+            d = pa.get_device_info_by_index(i)
+            if name.lower() in d["name"].lower() and d[ch_key] > 0:
+                logger.info(f"音频设备解析：{'输入' if want_input else '输出'} '{name}' → [{i}] {d['name']}")
+                return i
+    finally:
+        pa.terminate()
+    logger.warning(f"未找到匹配 '{name}' 的{'输入' if want_input else '输出'}设备，回退系统默认")
+    return None
+
+
 def build_worker(settings: Settings) -> PipelineWorker:
     """组装管线并返回 PipelineWorker（须在 asyncio 上下文中创建 runner 后运行）。"""
     stt_rate = settings.stt_sample_rate
     tts_rate = settings.tts_sample_rate
 
+    in_idx = _resolve_device_index(settings.audio_input_device, want_input=True)
+    out_idx = _resolve_device_index(settings.audio_output_device, want_input=False)
+
     # —— 本地音频入口 + Silero VAD（输入采样率必须 8k/16k）——
+    # 阶段4：可锁定虚拟声卡（BlackHole）走微信语音；留空则系统默认（本地麦）。
     transport = LocalAudioTransport(
         LocalAudioTransportParams(
             audio_in_enabled=True,
@@ -53,6 +81,8 @@ def build_worker(settings: Settings) -> PipelineWorker:
             audio_out_enabled=True,
             audio_out_sample_rate=tts_rate,
             audio_out_channels=1,
+            input_device_index=in_idx,
+            output_device_index=out_idx,
             vad_analyzer=SileroVADAnalyzer(sample_rate=stt_rate),
         )
     )
