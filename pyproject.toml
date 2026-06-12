@@ -19,6 +19,7 @@ dependencies = [
     "dashscope>=1.20",
     # —— 编排（音频重型 extras：silero/local，放到阶段 1 再加）——
     "pipecat-ai[local,qwen,silero]>=0.0.50",
+    "pypinyin>=0.55.0",
 ]
 
 [dependency-groups]

@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     tts_model: str = Field(default="cosyvoice-v3-flash", alias="TTS_MODEL")
     tts_voice: str = Field(default="longxiaochun_v3", alias="TTS_VOICE")
     tts_sample_rate: int = Field(default=24000, alias="TTS_SAMPLE_RATE")
+    # 语速：>1 更利落，帮助压低对话总时长（0.5–2.0）
+    tts_speech_rate: float = Field(default=1.15, alias="TTS_SPEECH_RATE")
+    # 开场白单独提速，压进 3-4s（措辞固定、不便再短，故靠语速）
+    tts_greeting_speech_rate: float = Field(default=1.45, alias="TTS_GREETING_SPEECH_RATE")
 
     # —— PostgreSQL ——
     postgres_user: str = Field(default="voicegate", alias="POSTGRES_USER")

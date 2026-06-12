@@ -13,6 +13,7 @@ Pipecat 的工具注册/回调在 pipeline 侧包装。
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 
 from loguru import logger
 from pipecat.adapters.schemas.function_schema import FunctionSchema
@@ -20,6 +21,7 @@ from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.services.llm_service import FunctionCallParams, LLMService
 
 from app import logging_utils
+from app.agent.roster import match_company
 from app.db import repo
 from app.push import wecom
 
@@ -89,6 +91,17 @@ async def submit_registration(plate: str, company: str, phone: str, reason: str)
     return {"ok": True, "id": reg.id}
 
 
+async def lookup_company(name: str) -> dict:
+    """把识别到的公司名到园区租户名单里做拼音模糊匹配。
+
+    返回 {"confidence": "high"|"fuzzy"|"none", "match": str|None, "score": float}。
+    confidence=high 调用方可直接折进复述；fuzzy 需单独确认；none 按原样记。
+    """
+    m = match_company(name)
+    logger.info(f"[TOOL] lookup_company('{name}') -> {m.confidence} {m.name} ({m.score:.2f})")
+    return {"confidence": m.confidence, "match": m.name, "score": round(m.score, 2)}
+
+
 # —— Pipecat 工具注册 ——
 
 SUBMIT_REGISTRATION_SCHEMA = FunctionSchema(
@@ -107,13 +120,29 @@ SUBMIT_REGISTRATION_SCHEMA = FunctionSchema(
 )
 
 
+LOOKUP_COMPANY_SCHEMA = FunctionSchema(
+    name="lookup_company",
+    description=(
+        "把识别到的来访单位名称到园区租户名单里核对（ASR 易听错公司名）。"
+        "拿到来访单位后调用一次，根据返回的 confidence 决定是直接用还是单独确认。"
+    ),
+    properties={
+        "name": {"type": "string", "description": "识别到的来访单位/公司名称"},
+    },
+    required=["name"],
+)
+
+
 def build_tools_schema() -> ToolsSchema:
     """构造挂到 LLMContext 的工具集。"""
-    return ToolsSchema(standard_tools=[SUBMIT_REGISTRATION_SCHEMA])
+    return ToolsSchema(standard_tools=[SUBMIT_REGISTRATION_SCHEMA, LOOKUP_COMPANY_SCHEMA])
 
 
-def register_tools(llm: LLMService) -> None:
-    """把 submit_registration 注册到 LLM service。"""
+def register_tools(llm: LLMService, *, on_registered: Callable[[], None] | None = None) -> None:
+    """把 submit_registration / lookup_company 注册到 LLM service。
+
+    on_registered：登记成功（写库+推送 ok）后回调，供管线触发优雅收尾。
+    """
 
     async def _handle_submit(params: FunctionCallParams) -> None:
         args = params.arguments
@@ -123,6 +152,13 @@ def register_tools(llm: LLMService) -> None:
             phone=args.get("phone", ""),
             reason=args.get("reason", ""),
         )
+        if result.get("ok") and on_registered is not None:
+            on_registered()
+        await params.result_callback(result)
+
+    async def _handle_lookup(params: FunctionCallParams) -> None:
+        result = await lookup_company(params.arguments.get("name", ""))
         await params.result_callback(result)
 
     llm.register_function("submit_registration", _handle_submit)
+    llm.register_function("lookup_company", _handle_lookup)

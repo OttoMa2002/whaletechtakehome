@@ -27,7 +27,7 @@ _PCM_FORMAT_BY_RATE: dict[int, AudioFormat] = {
 
 
 def synthesize_to_pcm(
-    *, api_key: str, model: str, voice: str, sample_rate: int, text: str
+    *, api_key: str, model: str, voice: str, sample_rate: int, text: str, speech_rate: float = 1.0
 ) -> bytes:
     """同步合成一段文本为 raw PCM 字节（用于预合成固定开场白，启动时调一次）。"""
     dashscope.api_key = api_key
@@ -44,6 +44,7 @@ def synthesize_to_pcm(
         model=model,
         voice=voice,
         format=_PCM_FORMAT_BY_RATE[sample_rate],
+        speech_rate=speech_rate,
         callback=_Callback(),
     )
     synthesizer.streaming_call(text)
@@ -61,6 +62,7 @@ class CosyVoiceTTSService(TTSService):
         model: str = "cosyvoice-v3-flash",
         voice: str = "longxiaochun",
         sample_rate: int = 24000,
+        speech_rate: float = 1.0,
         greeting_text: str | None = None,
         greeting_pcm: bytes | None = None,
         **kwargs,
@@ -75,6 +77,7 @@ class CosyVoiceTTSService(TTSService):
         self._api_key = api_key
         self._voice = voice
         self._model = model
+        self._speech_rate = speech_rate
         if sample_rate not in _PCM_FORMAT_BY_RATE:
             raise ValueError(f"CosyVoice 不支持的采样率: {sample_rate}")
         self._audio_format = _PCM_FORMAT_BY_RATE[sample_rate]
@@ -115,6 +118,7 @@ class CosyVoiceTTSService(TTSService):
             model=self._model,
             voice=self._voice,
             format=self._audio_format,
+            speech_rate=self._speech_rate,
             callback=_Callback(),
         )
 
