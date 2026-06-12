@@ -31,8 +31,9 @@ class Settings(BaseSettings):
     # —— TTS（百炼 CosyVoice flash）——
     tts_model: str = Field(default="cosyvoice-v3-flash", alias="TTS_MODEL")
     tts_voice: str = Field(default="longxiaochun_v3", alias="TTS_VOICE")
-    # 48k 对齐声卡名义率(虚拟声卡/微信/本机扬声器均 48k)，消除输出路径重采样打架
-    tts_sample_rate: int = Field(default=48000, alias="TTS_SAMPLE_RATE")
+    # 16k：实测唯一能干净喂给电话/微信 8k 窄带麦克风读端的写入率（16k→8k 无损整数降采样；
+    # 24k/48k 会被 8k 读端采成垃圾）。读端 8k/16k/48k 通吃；本地麦也适用。
+    tts_sample_rate: int = Field(default=16000, alias="TTS_SAMPLE_RATE")
     # 语速：>1 更利落，帮助压低对话总时长（0.5–2.0）
     tts_speech_rate: float = Field(default=1.15, alias="TTS_SPEECH_RATE")
     # 开场白单独提速，压进 3-4s（措辞固定、不便再短，故靠语速）
