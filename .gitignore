@@ -1,0 +1,15 @@
+# —— 密钥：永不进仓库 ——
+.env
+
+# —— Python ——
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# —— uv / venv ——
+.venv/
+
+# —— 系统 / 编辑器 ——
+.DS_Store

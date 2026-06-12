@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: voice-gate-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-voicegate}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-voicegate}
+      POSTGRES_DB: ${POSTGRES_DB:-voicegate}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./src/app/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-voicegate} -d ${POSTGRES_DB:-voicegate}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
