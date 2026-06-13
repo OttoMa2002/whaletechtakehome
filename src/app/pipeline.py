@@ -6,14 +6,21 @@
 
 from loguru import logger
 from pipecat.frames.frames import EndTaskFrame, Frame, TTSSpeakFrame, TTSStoppedFrame
+from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
+from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
-from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
+from pipecat.processors.aggregators.llm_response_universal import (
+    LLMContextAggregatorPair,
+    LLMUserAggregatorParams,
+)
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.qwen.llm import QwenLLMService
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
+from pipecat.turns.user_stop import TurnAnalyzerUserTurnStopStrategy
+from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
 from app import logging_utils
 from app.agent.prompt import GREETING, SYSTEM_PROMPT
@@ -137,7 +144,20 @@ def build_worker(settings: Settings) -> PipelineWorker:
     # 会话状态：登记成功置位，供优雅收尾用
     session = {"registered": False}
     register_tools(llm, on_registered=lambda: session.__setitem__("registered", True))
-    aggregators = LLMContextAggregatorPair(context)
+
+    # —— 轮次检测：把 Smart Turn 的最大静音等待从默认 3s 压到 turn_stop_secs(默认0.8)，每轮更跟手 ——
+    user_params = LLMUserAggregatorParams(
+        user_turn_strategies=UserTurnStrategies(
+            stop=[
+                TurnAnalyzerUserTurnStopStrategy(
+                    turn_analyzer=LocalSmartTurnAnalyzerV3(
+                        params=SmartTurnParams(stop_secs=settings.turn_stop_secs)
+                    )
+                )
+            ]
+        )
+    )
+    aggregators = LLMContextAggregatorPair(context, user_params=user_params)
     end_after = EndAfterRegistration(session)
 
     pipeline = Pipeline(

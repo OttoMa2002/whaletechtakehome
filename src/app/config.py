@@ -35,15 +35,20 @@ class Settings(BaseSettings):
     # 24k/48k 会被 8k 读端采成垃圾）。读端 8k/16k/48k 通吃；本地麦也适用。
     tts_sample_rate: int = Field(default=16000, alias="TTS_SAMPLE_RATE")
     # 语速：>1 更利落，帮助压低对话总时长（0.5–2.0）
-    tts_speech_rate: float = Field(default=1.15, alias="TTS_SPEECH_RATE")
+    tts_speech_rate: float = Field(default=1.25, alias="TTS_SPEECH_RATE")
     # 开场白单独提速，压进 3-4s（措辞固定、不便再短，故靠语速）
-    tts_greeting_speech_rate: float = Field(default=1.45, alias="TTS_GREETING_SPEECH_RATE")
+    tts_greeting_speech_rate: float = Field(default=1.25, alias="TTS_GREETING_SPEECH_RATE")
 
     # —— 音频设备（阶段4来电源）——
     # 按设备名子串匹配 PyAudio 设备；留空=系统默认（阶段1-3 本地麦）。
     # 微信语音接入：输入锁 BlackHole 2ch（访客声音），输出锁 BlackHole 16ch（回程给微信麦克风）。
     audio_input_device: str = Field(default="", alias="AUDIO_INPUT_DEVICE")
     audio_output_device: str = Field(default="", alias="AUDIO_OUTPUT_DEVICE")
+
+    # —— 轮次检测：Smart Turn "说完了"判定的最大静音等待(秒) ——
+    # pipecat 默认 3s（8k 劣化音质下模型常拿不准、接近上限→每轮 2-3s 卡顿）。压到 0.8 更跟手；
+    # 太小(<0.5)会在来访者报数字中途停顿时抢话，0.7–1.0 之间按手感调。
+    turn_stop_secs: float = Field(default=0.8, alias="TURN_STOP_SECS")
 
     # —— PostgreSQL ——
     postgres_user: str = Field(default="voicegate", alias="POSTGRES_USER")
