@@ -4,8 +4,15 @@
 登记成功后由 EndAfterRegistration 在道别播完时推 EndTaskFrame 优雅收尾。
 """
 
+import numpy as np
 from loguru import logger
-from pipecat.frames.frames import EndTaskFrame, Frame, TTSSpeakFrame, TTSStoppedFrame
+from pipecat.frames.frames import (
+    EndTaskFrame,
+    Frame,
+    InputAudioRawFrame,
+    TTSSpeakFrame,
+    TTSStoppedFrame,
+)
 from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
 from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
 from pipecat.audio.vad.silero import SileroVADAnalyzer
@@ -28,6 +35,48 @@ from app.agent.tools import build_tools_schema, register_tools
 from app.config import Settings
 from app.services.dashscope_stt import ParaformerSTTService
 from app.services.dashscope_tts import CosyVoiceTTSService, synthesize_to_pcm
+
+
+# 首声触发阈值：人声 RMS 远高于静音(实测人声 550–990、线路静音≈0)，200 区分度足够
+_FIRST_SOUND_RMS = 200.0
+_FIRST_SOUND_SUSTAIN_MS = 150.0
+
+
+class ConnectionDetector(FrameProcessor):
+    """首声触发（电话/微信用）：来电者一出声（输入 RMS 越过人声阈值并持续）即触发一次
+    "门岗问候+计时起点"，之后自我关闭。让接通方听到引导语、把计时起点对齐到真实交互开始。
+
+    为何不嗅底噪：标定发现微信/电话 DTX 使"接通但静音"时 RMS=0（与未接通无异），只能嗅人声。
+    生产形态有电信信令(SIP 200 OK 等)可在静音中拿接通事件、门岗对静音先开口——消费级 App 的固有限制。
+    """
+
+    def __init__(self, *, rms_threshold: float, sustain_ms: float) -> None:
+        super().__init__()
+        self._threshold = rms_threshold
+        self._sustain_ms = sustain_ms
+        self._on_connect = None
+        self._triggered = False
+        self._active_ms = 0.0
+
+    def set_on_connect(self, cb) -> None:
+        self._on_connect = cb
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        await super().process_frame(frame, direction)
+        if self._on_connect and not self._triggered and isinstance(frame, InputAudioRawFrame):
+            samples = np.frombuffer(frame.audio, dtype=np.int16)
+            if samples.size:
+                rms = float(np.sqrt(np.mean(samples.astype(np.float64) ** 2)))
+                frame_ms = samples.size / max(1, frame.num_channels) / frame.sample_rate * 1000
+                if rms >= self._threshold:
+                    self._active_ms += frame_ms
+                    if self._active_ms >= self._sustain_ms:
+                        self._triggered = True
+                        logger.info(f"[首声触发] 来电者出声(RMS≈{rms:.0f}) → 门岗问候+计时")
+                        await self._on_connect()
+                else:
+                    self._active_ms = 0.0  # 低于阈值即重置，要求"持续出声"而非偶发噪点
+        await self.push_frame(frame, direction)
 
 
 class EndAfterRegistration(FrameProcessor):
@@ -160,18 +209,26 @@ def build_worker(settings: Settings) -> PipelineWorker:
     aggregators = LLMContextAggregatorPair(context, user_params=user_params)
     end_after = EndAfterRegistration(session)
 
-    pipeline = Pipeline(
-        [
-            transport.input(),       # 麦克风音频帧
-            stt,                     # → 识别文本
-            aggregators.user(),      # → 写入用户上下文
-            llm,                     # → Qwen 流式回复（含工具调用）
-            tts,                     # → 合成音频帧
-            transport.output(),      # → 扬声器
-            aggregators.assistant(), # → 写入助手上下文
-            end_after,               # → 登记完道别后优雅结束
-        ]
+    # 问候时机：电话/微信用首声触发(嗅到来电者出声再问候)；本地启动即问候。
+    detector = (
+        ConnectionDetector(rms_threshold=_FIRST_SOUND_RMS, sustain_ms=_FIRST_SOUND_SUSTAIN_MS)
+        if settings.greet_on_first_sound
+        else None
     )
+
+    processors = [transport.input()]            # 麦克风/线路音频帧
+    if detector is not None:
+        processors.append(detector)             # → 嗅首声(触发问候+计时)
+    processors += [
+        stt,                     # → 识别文本
+        aggregators.user(),      # → 写入用户上下文
+        llm,                     # → Qwen 流式回复（含工具调用）
+        tts,                     # → 合成音频帧
+        transport.output(),      # → 扬声器
+        aggregators.assistant(), # → 写入助手上下文
+        end_after,               # → 登记完道别后优雅结束
+    ]
+    pipeline = Pipeline(processors)
 
     worker = PipelineWorker(
         pipeline,
@@ -183,10 +240,22 @@ def build_worker(settings: Settings) -> PipelineWorker:
         ),
     )
 
-    @worker.event_handler("on_pipeline_started")
-    async def _greet(worker, frame):  # noqa: ANN001
-        logger.info("管线启动，门岗主动问候（预合成开场白）")
-        logging_utils.start_call()  # 接通=门岗开始说话，计时起点
+    async def _greet_and_time() -> None:
+        """问候 + 计时起点（接通=门岗开口）。"""
+        logging_utils.start_call()
         await worker.queue_frames([TTSSpeakFrame(GREETING)])
+
+    if detector is not None:
+        detector.set_on_connect(_greet_and_time)
+
+        @worker.event_handler("on_pipeline_started")
+        async def _ready(worker, frame):  # noqa: ANN001
+            logger.info("管线启动，等待来电者首声（首声触发问候+计时）……")
+    else:
+
+        @worker.event_handler("on_pipeline_started")
+        async def _greet(worker, frame):  # noqa: ANN001
+            logger.info("管线启动，门岗主动问候（预合成开场白）")
+            await _greet_and_time()
 
     return worker

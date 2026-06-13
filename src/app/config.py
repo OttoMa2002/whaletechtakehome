@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     audio_input_device: str = Field(default="", alias="AUDIO_INPUT_DEVICE")
     audio_output_device: str = Field(default="", alias="AUDIO_OUTPUT_DEVICE")
 
+    # —— 问候时机开关 ——
+    # False(默认/本地)：管线启动即问候+计时（你就在跟前）。
+    # True(电话/微信)：等检测到来电者首声(线路出声)再问候+计时——让接通方听到引导语、对齐计时起点。
+    greet_on_first_sound: bool = Field(default=False, alias="GREET_ON_FIRST_SOUND")
+
     # —— 轮次检测：Smart Turn "说完了"判定的最大静音等待(秒) ——
     # pipecat 默认 3s（8k 劣化音质下模型常拿不准、接近上限→每轮 2-3s 卡顿）。压到 0.8 更跟手；
     # 太小(<0.5)会在来访者报数字中途停顿时抢话，0.7–1.0 之间按手感调。
